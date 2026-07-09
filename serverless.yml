@@ -119,3 +119,9 @@ functions:
           method: POST
           authorizer:
             name: cognitoAuth
+  getFeed:
+    handler: src/functions/feed/list.handler
+    events:
+      - httpApi:
+          path: /feed
+          method: GET
