@@ -2,9 +2,6 @@
 org: svrtech
 service: so-vale-reclamar-api
 
-plugins:
-  - serverless-offline
-
 provider:
   name: aws
   runtime: nodejs20.x
