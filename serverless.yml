@@ -1,0 +1,69 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: svrtech
+service: so-vale-reclamar-api
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1 
+  stage: ${opt:stage, 'dev'}
+  environment:
+    BUCKET_NAME: ${self:custom.bucketName}
+    DATABASE_URL: ${ssm:/sovalereclamar/prod/database-url}
+
+custom:
+  bucketName: sovalereclamar-fotos-bruno-dev-${self:provider.stage}
+
+resources:
+  Resources:
+    
+    UploadsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods: [PUT, POST, GET]
+              AllowedOrigins: ['*'] 
+              AllowedHeaders: ['*']
+
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: SoValeReclamarUsers-${self:provider.stage}
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireSymbols: false
+            RequireUppercase: false
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: SoValeReclamarIonicApp
+        UserPoolId: !Ref CognitoUserPool
+        ExplicitAuthFlows:
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        GenerateSecret: false
+        
+functions:
+  createComplaint:
+    handler: src/functions/complaints/create.handler
+    events:
+      - httpApi:
+          path: /complaints
+          method: POST
+  
+  searchEntities:
+    handler: src/functions/entities/search.handler
+    events:
+      - httpApi:
+          path: /entities/search
+          method: GET
