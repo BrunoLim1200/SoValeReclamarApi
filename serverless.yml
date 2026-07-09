@@ -2,6 +2,9 @@
 org: svrtech
 service: so-vale-reclamar-api
 
+plugins:
+  - serverless-offline
+
 provider:
   name: aws
   runtime: nodejs20.x
@@ -9,7 +12,20 @@ provider:
   stage: ${opt:stage, 'dev'}
   environment:
     BUCKET_NAME: ${self:custom.bucketName}
-    DATABASE_URL: ${ssm:/sovalereclamar/prod/database-url}
+    DATABASE_URL: ${env:DATABASE_URL, ssm:/sovalereclamar/prod/database-url}
+
+httpApi:
+    authorizers:
+      cognitoAuth:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: 
+          Fn::Join:
+            - ""
+            - - "https://cognito-idp.${self:provider.region}.amazonaws.com/"
+              - Ref: CognitoUserPool
+        audience:
+          - Ref: CognitoUserPoolClient
 
 custom:
   bucketName: sovalereclamar-fotos-bruno-dev-${self:provider.stage}
@@ -60,6 +76,8 @@ functions:
       - httpApi:
           path: /complaints
           method: POST
+          authorizer:
+            name: cognitoAuth
   
   searchEntities:
     handler: src/functions/entities/search.handler
@@ -67,3 +85,37 @@ functions:
       - httpApi:
           path: /entities/search
           method: GET
+
+  createEntity:
+    handler: src/functions/entities/create.handler
+    events:
+      - httpApi:
+          path: /entities
+          method: POST
+          authorizer:
+            name: cognitoAuth
+
+  listComplaints:
+    handler: src/functions/complaints/list.handler
+    events:
+      - httpApi:
+          path: /entities/{id}/complaints
+          method: GET
+
+  corroborateComplaint:
+    handler: src/functions/engagement/corroborate.handler
+    events:
+      - httpApi:
+          path: /complaints/{id}/corroborate
+          method: POST
+          authorizer:
+            name: cognitoAuth
+
+  generateUploadUrl:
+    handler: src/functions/uploads/generate-url.handler
+    events:
+      - httpApi:
+          path: /uploads/presigned-url
+          method: POST
+          authorizer:
+            name: cognitoAuth

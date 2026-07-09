@@ -15,11 +15,12 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return { statusCode: 400, body: JSON.stringify({ error: 'entityId, title e content são obrigatórios.' }) };
     }
     
-    const mockAuthorId = '11111111-1111-1111-1111-111111111111'; 
+    const claims = event.requestContext.authorizer?.jwt?.claims;
+    const authorId = claims?.sub as string; 
 
     const [newComplaint] = await db.insert(complaints).values({
       entityId,
-      authorId: mockAuthorId,
+      authorId,
       title,
       content,
       mediaUrl: mediaUrl || null,
