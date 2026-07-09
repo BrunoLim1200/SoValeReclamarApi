@@ -1,7 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { db } from '../../db';
 import { entities } from '../../db/schema';
-import { ilike } from 'drizzle-orm';
+import { ilike, sql, or } from 'drizzle-orm';
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   try {
@@ -12,14 +12,24 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
 
     const results = await db
-      .select({
-        id: entities.id,
-        name: entities.name,
-        type: entities.type
-      })
-      .from(entities)
-      .where(ilike(entities.name, `%${searchQuery}%`))
-      .limit(10); 
+        .select({
+            id: entities.id,
+            name: entities.name,
+            type: entities.type
+        })
+        .from(entities)
+        .where(
+            or(
+            // Busca tradicional (se o usuário digitar certinho parte do nome)
+            ilike(entities.name, `%${searchQuery}%`), 
+            
+            // Busca fuzzy com pg_trgm (Mcdonaldz -> McDonald's)
+            sql`${entities.name} % ${searchQuery}`
+            )
+        )
+        // Ordena calculando a distância trigramática: o mais semelhante aparece no topo
+        .orderBy(sql`${entities.name} <-> ${searchQuery}`) 
+        .limit(10);
 
     return {
       statusCode: 200,
