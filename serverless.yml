@@ -5,6 +5,7 @@ service: so-vale-reclamar-api
 provider:
   name: aws
   runtime: nodejs20.x
+  variablesResolutionMode: 20210326
   region: us-east-1 
   stage: ${opt:stage, 'dev'}
   environment:
