@@ -11,19 +11,18 @@ provider:
   environment:
     BUCKET_NAME: ${self:custom.bucketName}
     DATABASE_URL: ${env:DATABASE_URL, ssm:/sovalereclamar/prod/database-url}
-
-httpApi:
-    authorizers:
-      cognitoAuth:
-        type: jwt
-        identitySource: $request.header.Authorization
-        issuerUrl: 
-          Fn::Join:
-            - ""
-            - - "https://cognito-idp.${self:provider.region}.amazonaws.com/"
-              - Ref: CognitoUserPool
-        audience:
-          - Ref: CognitoUserPoolClient
+  httpApi:
+      authorizers:
+        cognitoAuth:
+          type: jwt
+          identitySource: $request.header.Authorization
+          issuerUrl: 
+            Fn::Join:
+              - ""
+              - - "https://cognito-idp.${self:provider.region}.amazonaws.com/"
+                - Ref: CognitoUserPool
+          audience:
+            - Ref: CognitoUserPoolClient
 
 custom:
   bucketName: sovalereclamar-fotos-bruno-dev-${self:provider.stage}
