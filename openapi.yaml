@@ -1,0 +1,479 @@
+openapi: 3.1.0
+info:
+  title: Só Vale Reclamar API
+  version: 1.0.0
+  description: |
+    Backend contract for the Só Vale Reclamar app. Users file **complaints** against
+    **entities** (places, movies, companies, products) and **corroborate** (endorse)
+    each other's complaints.
+
+    ## Authentication
+    Protected endpoints require a Cognito JWT in the `Authorization` header:
+    `Authorization: Bearer <idToken>`. The token's `sub` claim is the user id and is
+    used as the complaint/corroboration author. Public endpoints (search, list, feed)
+    need no token.
+
+    ## Errors
+    Every 4xx/5xx response returns `{ "error": string }` (messages are in Portuguese).
+
+    ## Image uploads (two-step)
+    1. `POST /uploads/presigned-url` with the file's `contentType` → returns `uploadUrl` + `mediaUrl`.
+    2. `PUT` the raw file bytes to `uploadUrl` with a matching `Content-Type` header.
+    3. Send the returned `mediaUrl` as the complaint's `mediaUrl` when calling `POST /complaints`.
+
+    The returned `mediaUrl` is a permanent, publicly-readable URL (the uploads bucket grants
+    public `s3:GetObject`), so the app can render it directly.
+
+servers:
+  - url: https://REPLACE-ME.execute-api.us-east-1.amazonaws.com
+    description: dev (get the real URL from `npx serverless info --stage dev`)
+  - url: https://REPLACE-ME.execute-api.us-east-1.amazonaws.com
+    description: prod (get the real URL from `npx serverless info --stage prod`)
+
+tags:
+  - name: Complaints
+    description: Create and list complaints.
+  - name: Entities
+    description: Create and search the things complaints are filed against.
+  - name: Engagement
+    description: Corroborations (endorsements) on complaints.
+  - name: Uploads
+    description: Presigned S3 URLs for complaint images.
+  - name: Feed
+    description: Global ranked feed of complaints.
+
+paths:
+  /complaints:
+    post:
+      tags: [Complaints]
+      summary: Create a complaint
+      operationId: createComplaint
+      security:
+        - cognitoAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateComplaintInput'
+      responses:
+        '201':
+          description: Complaint created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Complaint'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /entities:
+    post:
+      tags: [Entities]
+      summary: Create an entity
+      operationId: createEntity
+      security:
+        - cognitoAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEntityInput'
+      responses:
+        '201':
+          description: Entity created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /entities/search:
+    get:
+      tags: [Entities]
+      summary: Search entities by name (fuzzy)
+      description: Trigram fuzzy search; returns up to 10 matches ordered by similarity.
+      operationId: searchEntities
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search term, minimum 2 characters.
+          schema:
+            type: string
+            minLength: 2
+      responses:
+        '200':
+          description: Matching entities (max 10)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EntitySearchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /entities/{id}/complaints:
+    get:
+      tags: [Complaints]
+      summary: List complaints for an entity
+      description: Returns the top 20 complaints for the entity, most corroborated first, then newest.
+      operationId: listComplaints
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Entity id.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Complaints for the entity (max 20)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ComplaintListItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /complaints/{id}/corroborate:
+    post:
+      tags: [Engagement]
+      summary: Corroborate (endorse) a complaint
+      description: A user may corroborate a given complaint only once.
+      operationId: corroborateComplaint
+      security:
+        - cognitoAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Complaint id.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Corroboration recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: The user has already corroborated this complaint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /uploads/presigned-url:
+    post:
+      tags: [Uploads]
+      summary: Get a presigned S3 upload URL
+      description: |
+        Returns a short-lived (60s) presigned PUT URL plus the final public media URL.
+        PUT the file to `uploadUrl` with a matching `Content-Type`, then send `mediaUrl`
+        as the complaint's `mediaUrl`.
+      operationId: generateUploadUrl
+      security:
+        - cognitoAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresignedUrlInput'
+      responses:
+        '200':
+          description: Presigned upload URL issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignedUrlResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /feed:
+    get:
+      tags: [Feed]
+      summary: Global ranked feed
+      description: |
+        Complaints across all entities, ranked by a time-decay relevance score
+        (corroborations vs. age). Page size is fixed at 10.
+      operationId: getFeed
+      security: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: 1-based page number. Defaults to 1.
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+      responses:
+        '200':
+          description: A page of feed items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    cognitoAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Cognito JWT (id token) passed as `Authorization: Bearer <token>`.'
+
+  responses:
+    BadRequest:
+      description: Invalid or missing input.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message (Portuguese).
+      additionalProperties: false
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+      additionalProperties: false
+
+    EntityType:
+      type: string
+      description: Kind of entity. Input is case-insensitive; stored/returned uppercase.
+      enum: [PLACE, MOVIE, COMPANY, PRODUCT]
+
+    Author:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+      additionalProperties: false
+
+    CreateEntityInput:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/EntityType'
+      additionalProperties: false
+
+    Entity:
+      type: object
+      required: [id, type, name, createdBy]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/EntityType'
+        name:
+          type: string
+        createdBy:
+          type: [string, 'null']
+          format: uuid
+          description: User id of the creator; null if unknown.
+      additionalProperties: false
+
+    EntitySearchResult:
+      type: object
+      required: [id, name, type]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/EntityType'
+      additionalProperties: false
+
+    CreateComplaintInput:
+      type: object
+      required: [entityId, title, content]
+      properties:
+        entityId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          type: string
+        mediaUrl:
+          type: [string, 'null']
+          description: Optional. The `mediaUrl` returned by /uploads/presigned-url.
+      additionalProperties: false
+
+    Complaint:
+      type: object
+      required: [id, entityId, authorId, title, content, mediaUrl, corroborationCount, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        entityId:
+          type: string
+          format: uuid
+        authorId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          type: string
+        mediaUrl:
+          type: [string, 'null']
+        corroborationCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+
+    ComplaintListItem:
+      type: object
+      required: [id, title, content, mediaUrl, corroborationCount, createdAt, author]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          type: string
+        mediaUrl:
+          type: [string, 'null']
+        corroborationCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        author:
+          $ref: '#/components/schemas/Author'
+      additionalProperties: false
+
+    FeedItem:
+      type: object
+      required: [id, title, content, mediaUrl, corroborationCount, createdAt, author, entity]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          type: string
+        mediaUrl:
+          type: [string, 'null']
+        corroborationCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        author:
+          $ref: '#/components/schemas/Author'
+        entity:
+          type: object
+          required: [id, name]
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+          additionalProperties: false
+      additionalProperties: false
+
+    FeedResponse:
+      type: object
+      required: [data, metadata]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedItem'
+        metadata:
+          type: object
+          required: [currentPage, hasMore, nextPage]
+          properties:
+            currentPage:
+              type: integer
+            hasMore:
+              type: boolean
+            nextPage:
+              type: [integer, 'null']
+          additionalProperties: false
+      additionalProperties: false
+
+    PresignedUrlInput:
+      type: object
+      required: [contentType]
+      properties:
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+      additionalProperties: false
+
+    PresignedUrlResponse:
+      type: object
+      required: [uploadUrl, mediaUrl]
+      properties:
+        uploadUrl:
+          type: string
+          format: uri
+          description: Presigned S3 PUT URL, valid for 60 seconds.
+        mediaUrl:
+          type: string
+          format: uri
+          description: Final public URL to store as the complaint's mediaUrl.
+      additionalProperties: false

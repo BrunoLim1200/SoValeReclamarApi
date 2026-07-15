@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "serverless offline",
     "test": "jest",
-    "test:watch": "jest --watchAll"
+    "test:watch": "jest --watchAll",
+    "gen:api-types": "npx --yes -p openapi-typescript@^7 -p typescript@^5 openapi-typescript openapi.yaml -o api-types.ts"
   },
   "keywords": [],
   "author": "",

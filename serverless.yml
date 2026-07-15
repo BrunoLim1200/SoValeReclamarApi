@@ -12,6 +12,7 @@ provider:
     BUCKET_NAME: ${self:custom.bucketName}
     DATABASE_URL: ${env:DATABASE_URL, ssm:/sovalereclamar/prod/database-url}
   httpApi:
+      cors: true
       authorizers:
         cognitoAuth:
           type: jwt
@@ -37,8 +38,31 @@ resources:
         CorsConfiguration:
           CorsRules:
             - AllowedMethods: [PUT, POST, GET]
-              AllowedOrigins: ['*'] 
+              AllowedOrigins: ['*']
               AllowedHeaders: ['*']
+        # Objetos são fotos de reclamações exibidas no feed público, então
+        # liberamos leitura pública via bucket policy (não via ACL). É preciso
+        # desbloquear políticas públicas no Block Public Access do bucket.
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          IgnorePublicAcls: true
+          BlockPublicPolicy: false
+          RestrictPublicBuckets: false
+
+    # Concede leitura pública (apenas GetObject) dos objetos do bucket, para que
+    # o mediaUrl retornado por /uploads/presigned-url possa ser exibido no app.
+    UploadsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref UploadsBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action: s3:GetObject
+              Resource: !Sub "${UploadsBucket.Arn}/*"
 
     CognitoUserPool:
       Type: AWS::Cognito::UserPool
@@ -48,6 +72,8 @@ resources:
           - email
         AutoVerifiedAttributes:
           - email
+        LambdaConfig:
+          PostConfirmation: !GetAtt PostConfirmationLambdaFunction.Arn
         Policies:
           PasswordPolicy:
             MinimumLength: 8
@@ -55,6 +81,15 @@ resources:
             RequireNumbers: true
             RequireSymbols: false
             RequireUppercase: false
+
+    # Permite que o Cognito invoque a Lambda de PostConfirmation.
+    PostConfirmationInvokePermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: !GetAtt PostConfirmationLambdaFunction.Arn
+        Principal: cognito-idp.amazonaws.com
+        SourceArn: !GetAtt CognitoUserPool.Arn
 
     CognitoUserPoolClient:
       Type: AWS::Cognito::UserPoolClient
@@ -122,3 +157,8 @@ functions:
       - httpApi:
           path: /feed
           method: GET
+
+  # Invocada pelo Cognito (PostConfirmation) — sem evento HTTP.
+  # A ligação com o User Pool é feita via LambdaConfig no recurso CognitoUserPool.
+  postConfirmation:
+    handler: src/functions/auth/post-confirmation.handler
