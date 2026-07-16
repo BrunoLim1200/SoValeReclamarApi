@@ -5,8 +5,8 @@ import { eq, sql } from 'drizzle-orm';
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   try {
-    // Pega a página atual da URL (ex: ?page=1). Default é 1.
-    const page = parseInt(event.queryStringParameters?.page || '1');
+    const parsedPage = parseInt(event.queryStringParameters?.page || '1', 10);
+    const page = Number.isNaN(parsedPage) || parsedPage < 1 ? 1 : parsedPage;
     const limit = 10;
     const offset = (page - 1) * limit;
 
